@@ -205,3 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# API Key
+API_KEY.txt
+
+# Ignore artifacts and compilation folders with wildcard patterns
+artifacts_*/
+compilation_*/
+
+# Ignore Outputs
+output/*.json
+output/*.csv
+output/*.mlir
