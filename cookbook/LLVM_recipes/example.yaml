@@ -1,0 +1,53 @@
+id: "gh-iree-integer-fusion-fix-complex"
+source: "human"
+verified: true
+created_at: "2026-01-23"
+tags: ["linalg", "cpp", "tablegen", "rebuild-required"]
+
+problem:
+  summary: "Integer fusion requires both a C++ logic fix and a new TableGen constraint."
+  description: |
+    Simply changing the C++ logic caused a verification failure in the IR because
+    the TableGen definition didn't support the new operand type.
+  error_log: |
+    error: 'linalg.generic' op operand #0 must be tensor of float values
+    ...
+
+# THE REPRODUCTION (Unit Test)
+test_case:
+  input_ir: |
+    ... (The failing MLIR code) ...
+  repro_command: "iree-opt --pass-pipeline='builtin.module(func.func(tiling))' input.mlir"
+
+# THE SOLUTION (Transaction)
+solution:
+  requires_rebuild: true  # Tells the Agent: "Run ninja after applying these changes"
+  
+  # A list of atomic changes
+  changes:
+    # Change 1: The Logic Fix
+    - file: "compiler/src/Dialect/Linalg/Transforms/Fusion.cpp"
+      action: "patch"     # or "create", "delete"
+      description: "Allow fusion for Integer types in the greedy pattern."
+      diff: |
+        --- a/Fusion.cpp
+        +++ b/Fusion.cpp
+        @@ -120,7 +120,7 @@
+        - if (type.isF32())
+        + if (type.isInteger() || type.isF32())
+
+    # Change 2: The Definition Fix
+    - file: "compiler/include/mlir/Dialect/Linalg/IR/LinalgOps.td"
+      action: "patch"
+      description: "Relax the type constraint in the ODS definition."
+      diff: |
+        --- a/LinalgOps.td
+        +++ b/LinalgOps.td
+        @@ -50,5 +50,5 @@
+        - AnyFloat:$operand
+        + AnyType:$operand
+
+# THE VERIFICATION
+verification:
+  expected_output_ir_pattern: |
+    CHECK: arith.addi
