@@ -217,3 +217,8 @@ compilation_*/
 output/*.json
 output/*.csv
 output/*.mlir
+
+# Ignore scip outputs
+*.proto
+*.scip
+scip_pb2.py
