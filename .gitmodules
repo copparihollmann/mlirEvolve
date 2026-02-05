@@ -28,3 +28,6 @@
 [submodule "third_party/CompilerAgentBench"]
 	path = third_party/CompilerAgentBench
 	url = https://github.com/copparihollmann/CompilerAgentBench.git
+[submodule "data/cookbook"]
+	path = data/cookbook
+	url = https://github.com/copparihollmann/cooking-the-dragon.git
