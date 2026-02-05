@@ -213,12 +213,16 @@ API_KEY.txt
 artifacts_*/
 compilation_*/
 
-# Ignore Outputs
-output/*.json
-output/*.csv
-output/*.mlir
+# Ignore Artifacts
+data/artifacts/*.json
+data/artifacts/*.csv
+data/artifacts/*.mlir
+data/artifacts/*.vmfb
 
 # Ignore scip outputs
 *.proto
 *.scip
 scip_pb2.py
+
+# Ignore neo4j database folder
+data/knowledge_base/neo4j/*
