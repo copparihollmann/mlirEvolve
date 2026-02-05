@@ -19,3 +19,12 @@
 [submodule "third_party/graphiti"]
 	path = third_party/graphiti
 	url = https://github.com/getzep/graphiti.git
+[submodule "third_party/rlm"]
+	path = third_party/rlm
+	url = https://github.com/alexzhang13/rlm.git
+[submodule "third_party/autocomp"]
+	path = third_party/autocomp
+	url = https://github.com/ucb-bar/autocomp.git
+[submodule "third_party/CompilerAgentBench"]
+	path = third_party/CompilerAgentBench
+	url = https://github.com/copparihollmann/CompilerAgentBench.git
