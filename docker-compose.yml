@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.16.0
+    container_name: mlir_neo4j
+    ports:
+      - "7474:7474" # HTTP Browser
+      - "7687:7687" # Bolt Protocol
+    volumes:
+      - ./data/knowledge_base/neo4j/data:/data
+      - ./data/knowledge_base/neo4j/logs:/logs
+      - ./data/knowledge_base/neo4j/conf:/conf
+      - ./data/knowledge_base/neo4j/plugins:/plugins
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
+      
+      # 🚀 AUTO-INSTALL PLUGINS (Optional but Recommended)
+      # "apoc": Standard utility library (formatting, math, refactoring)
+      # "graph-data-science": For PageRank, Community Detection (Smart Agent stuff)
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      
+      # Allow these plugins to run unrestricted
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      
+      # Performance Tuning
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
+    restart: unless-stopped
