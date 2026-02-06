@@ -31,3 +31,12 @@
 [submodule "data/cookbook"]
 	path = data/cookbook
 	url = https://github.com/copparihollmann/cooking-the-dragon.git
+[submodule "experiments/torchao/ao"]
+	path = experiments/torchao/ao
+	url = https://github.com/pytorch/ao.git
+[submodule "experiments/VLA/lerobot"]
+	path = experiments/VLA/lerobot
+	url = https://github.com/huggingface/lerobot.git
+[submodule "experiments/VLA/PI0-UCB-BAR"]
+	path = experiments/VLA/PI0-UCB-BAR
+	url = https://github.com/ucb-bar/Understanding-PI0.git
