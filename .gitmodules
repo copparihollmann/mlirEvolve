@@ -4,12 +4,6 @@
 [submodule "third_party/CompilerGym"]
 	path = third_party/CompilerGym
 	url = https://github.com/facebookresearch/CompilerGym.git
-[submodule "third_party/CompilerDream"]
-	path = third_party/CompilerDream
-	url = https://github.com/thuml/CompilerDream.git
-[submodule "third_party/langgraph"]
-	path = third_party/langgraph
-	url = https://github.com/langchain-ai/langgraph.git
 [submodule "third_party/scip-clang"]
 	path = third_party/scip-clang
 	url = https://github.com/sourcegraph/scip-clang.git
