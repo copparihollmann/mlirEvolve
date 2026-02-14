@@ -326,3 +326,49 @@ mlirEvolve is **the core agent framework** itself. It is not a wrapper around an
 4. **Data Layer (LanceDB + Artifacts):** Vector embeddings in LanceDB for similarity-based code/recipe search, plus persistent storage of compilation artifacts and provenance traces.
 
 The design philosophy is **tool-augmented AI**: rather than giving an LLM raw compiler source and hoping for the best, mlirEvolve gives it structured tools that mirror how a human compiler engineer works -- build, compile, check, trace, and reference known patterns from history.
+
+---
+
+## 9. GitHub Issues & Roadmap
+
+14 open issues organized into a phased roadmap (tracked by **#14**).
+
+### Tracking Issue
+
+**#14 -- [Infra][Tracking] Compiler Tooling & Autonomous Optimization Roadmap**
+- Phase 1: Core Tooling (#6, #11, #10, #9)
+- Phase 2: Autonomous Optimization (#7, #8)
+- Phase 3: Agent Integration & Memory (#13)
+
+### Phase 1: Core Infrastructure
+
+| # | Title | Summary |
+|---|-------|---------|
+| **#6** | [Infra][Build] Unified Multi-Target Build Manager | Upgrade `build.py` with build profiles: `HOST_DEBUG`, `HOST_ASAN`, `RISCV_FIRESIM`, `RISCV_SPACEMIT`. Single Python entry point replacing scattered bash scripts. Auto-detect toolchain roots, handle `LD_PRELOAD` for ASAN. |
+| **#11** | [Tools][Dialect] MLIR Dialect & Transform Generator | Jinja2-based scaffolder that generates ~10 files (ODS TableGen, C++ headers, CMakeLists.txt, LIT tests) for a new MLIR dialect from a single command. Acceptance: generated dialect compiles and round-trip tests pass via `iree-opt`. |
+| **#10** | [Tools][Debug] MLIR Provenance Tracer & RLM Analysis | Polish the structural tracer (binding-based sanitization, smart collapse). Wire up RLM (GPT-4o) to explain transformations -- e.g. "which pass introduced `arith.sitofp` and was it fused correctly?" Acceptance: structural search finds ops by location even when line numbers shift; RLM cites specific pass names. |
+| **#9** | [Infra][HIL] Hardware-in-the-Loop Profiling Rig | SSH/UART-based remote execution on RISC-V boards (`paramiko`/`pyserial`). Wraps `iree-benchmark-module` output into JSON `{mean_latency_ms, peak_memory_kb}`. Perf lock ensures single-benchmark-at-a-time. |
+
+### Phase 2: Autonomous Optimization (Research)
+
+| # | Title | Summary |
+|---|-------|---------|
+| **#7** | [Research][Magellan] Autonomous Heuristic Discovery Engine | Following Google DeepMind's "Magellan" paper. Evolutionary search over C++ compiler heuristics (tiling, fusion, vectorization). Inject `// EVOLVE-BLOCK-START` markers in pass code, LLM proposes policy changes, recompile via `builder.py`, benchmark, iterate. Use `optuna` for constant tuning. Acceptance: finds tiling config >5% faster than default. |
+| **#8** | [Research][Autocomp] Automated Ukernel Synthesis Agent | Following UC Berkeley's "Autocomp" paper. Beam search over micro-kernel optimizations (unroll, vectorize, reorder) targeting RISC-V V-extension. LLM as planner (selects optimization menu items) + coder (generates C/intrinsics). Verification loop: compile, correctness check, cycle-count feedback. Acceptance: generates RVV kernel >1.5x faster than generic `llvm-cpu` lowering. |
+
+### Phase 3: Agent Integration & Knowledge
+
+| # | Title | Summary |
+|---|-------|---------|
+| **#13** | [Infra][Knowledge] Compiler Recipe Mining & Cookbook Pipeline | End-to-end pipeline: mine LLVM commits (PyDriller, Golden Rule) -> enrich with GitHub PR labels -> synthesize structured YAML recipes via LLM -> ingest into LanceDB for RAG retrieval. Acceptance: mine >50 recipes from 1000 LLVM commits, retrieve relevant recipe for "How to fix a linalg fusion crash?" query. |
+| **#12** | [Infra][Agent] Implement MCP Server & Codex Skill Definition | Expose tools via **Model Context Protocol** (`FastMCP("mlirEvolve")`). Tools: `build`, `compile_mlir`, `verify_ir`, `provenance_trace`. Create unified CLI (`cli.py`) and `.codex/skills/mlir-evolve/` with `SKILL.md` + reference docs for Claude/Codex agents. |
+| **#4** | [Infra][KG] Unified Build & Dialect Graph Ingestion | Extend Neo4j graph beyond C++ SCIP index: add **CMake build targets** (via CMake File API JSON), **MLIR dialect definitions** (via `iree-tblgen --gen-dialect-doc`). Unify with SCIP index to create full lineage: `Build Target` <-> `Source File` <-> `C++ Symbol` <-> `MLIR Op`. Acceptance: Cypher query traverses from `iree-compile` binary to its linked libraries. |
+
+### Standalone Tools
+
+| # | Title | Summary |
+|---|-------|---------|
+| **#5** | [Tools][Export] Model Exporter (pilot: smolVLA) | Audit harness for PyTorch model export to MLIR. Auto-generate dummy inputs, attempt `torch.export` / `torch_mlir.compile`, classify failures (`MISSING_OP`, `TYPE_MISMATCH`, `DYNAMIC_SHAPE_ERROR`), generate `shim_requirements.yaml` gap report. |
+| **#3** | [Tools][RISCV] ISA Registry & Boilerplate Generator | YAML spec for RISC-V extensions (mnemonic, intrinsic, tile shape, operand types) -> auto-generate TableGen snippets (`IREECPUEnums.td`), MLIR roundtrip/lowering tests, and LLVM backend intrinsic verification. |
+| **#2** | [Tooling][Maintenance] Upstream Dependency Change Scanner | API surface differ for torchao/IREE/PyTorch. Snapshot public APIs via `inspect` (Python) or header parsing (C/C++), diff between versions, filter by monitored namespaces, report additions/removals/breaking changes. |
+| **#1** | [Quant][MX][torchao] MX Quantization Frontend Export | Audit suite for `torchao` quantization schemes. Discover available strategies via reflection, generate micro-modules (single linear layers), attempt compile through `torch-mlir`, classify failures by stage, output `coverage_report.json`. |
