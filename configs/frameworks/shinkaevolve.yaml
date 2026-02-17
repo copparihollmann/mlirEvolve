@@ -1,0 +1,6 @@
+# ShinkaEvolve framework configuration (stub)
+# ShinkaEvolve is not yet integrated — this config is a placeholder.
+max_iterations: 100
+population_size: 50
+strategy: "map_elites"
+random_seed: 42

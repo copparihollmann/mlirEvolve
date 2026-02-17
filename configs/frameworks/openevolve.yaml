@@ -1,0 +1,13 @@
+# OpenEvolve framework configuration
+max_iterations: 100
+population_size: 50
+islands: 4
+migration_interval: 10
+random_seed: 42
+
+# Evolution strategy
+diff_based_evolution: true
+
+# Evaluation
+evaluator_timeout: 600
+cascade_evaluation: true
