@@ -45,6 +45,12 @@ EXAMPLES = {
         "file_suffix": ".cpp",
         "language": "cpp",
     },
+    "regalloc_priority": {
+        "initial_program": str(Path(__file__).parent / "tasks/regalloc_priority/initial.cpp"),
+        "evaluator": str(Path(__file__).parent / "tasks/regalloc_priority/evaluate.py"),
+        "file_suffix": ".cpp",
+        "language": "cpp",
+    },
 }
 
 
