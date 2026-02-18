@@ -1,0 +1,40 @@
+{
+  "id": "9e3e7956-1013-48e6-b354-a415acc46d15",
+  "generation": 3,
+  "iteration": 10,
+  "timestamp": 1771380995.4108431,
+  "parent_id": "89d118eb-7b5e-4f59-933d-89f79f528a6c",
+  "metrics": {
+    "combined_score": 25.3385,
+    "build_success": true,
+    "build_time": 3.51,
+    "total_text_size": 1198469,
+    "size_reduction_pct": 25.3385,
+    "avg_speedup": 0.0,
+    "benchmark_details": {
+      "lua.bc": {
+        "text_size": 219556,
+        "runtime": null,
+        "size_reduction_pct": 32.599
+      },
+      "lz4.bc": {
+        "text_size": 133917,
+        "runtime": null,
+        "size_reduction_pct": 7.3809
+      },
+      "sqlite3.bc": {
+        "text_size": 781492,
+        "runtime": null,
+        "size_reduction_pct": 26.7468
+      },
+      "zlib.bc": {
+        "text_size": 63504,
+        "runtime": null,
+        "size_reduction_pct": 6.6557
+      }
+    },
+    "error": null
+  },
+  "language": "cpp",
+  "saved_at": 1771380995.4483986
+}

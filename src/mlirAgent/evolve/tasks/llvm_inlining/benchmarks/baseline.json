@@ -1,0 +1,18 @@
+{
+  "lua.bc": {
+    "text_size": 325746,
+    "runtime": null
+  },
+  "lz4.bc": {
+    "text_size": 144589,
+    "runtime": null
+  },
+  "sqlite3.bc": {
+    "text_size": 1066837,
+    "runtime": null
+  },
+  "zlib.bc": {
+    "text_size": 68032,
+    "runtime": null
+  }
+}

@@ -39,6 +39,12 @@ EXAMPLES = {
         "file_suffix": ".py",
         "language": "python",
     },
+    "llvm_inlining": {
+        "initial_program": str(Path(__file__).parent / "tasks/llvm_inlining/initial.cpp"),
+        "evaluator": str(Path(__file__).parent / "tasks/llvm_inlining/evaluate.py"),
+        "file_suffix": ".cpp",
+        "language": "cpp",
+    },
 }
 
 
@@ -81,7 +87,7 @@ def _build_config(args, prompts_dir: str) -> OEConfig:
     cfg.database.num_islands = 1
     cfg.database.migration_interval = 999
     cfg.checkpoint_interval = 1
-    cfg.diff_based_evolution = True
+    cfg.diff_based_evolution = False
 
     return cfg
 
