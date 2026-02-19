@@ -126,9 +126,10 @@ Excluded: clamav (segfault), 7zip (link error from multi-source build).
 
 ## Experiment Results
 
-### Experiment A: No Optuna, 10 iterations (2025-02-17)
+### Experiment A: No Optuna, 10 iterations (2026-02-17)
 
 Best score: **8.65** (8.78% binary size reduction), iteration 3.
+Avg score: 5.75, median: 8.01. Time: 45 min total (~4.5 min/iter).
 
 | Benchmark | Binary Reduction % |
 |-----------|-------------------|
@@ -136,29 +137,53 @@ Best score: **8.65** (8.78% binary size reduction), iteration 3.
 | spass | 18.2% |
 | consumer-typeset | 13.2% |
 | mafft | 12.2% |
-| kimwitu | 2.7% |
-| bullet | 3.0% |
-| lencod | 4.3% |
-| tramp3d-v4 | 2.9% |
+| lencod | 7.9% |
+| bullet | 7.2% |
+| tramp3d-v4 | 6.7% |
+| kimwitu | 0.4% |
+
+### Experiment B: + Optuna (5 trials), 10 iterations (2026-02-18)
+
+Best score: **8.66** (8.41% binary size reduction), iteration 2.
+Avg score: 6.00, median: 7.16. Time: 83 min total (~8.3 min/iter).
+Optuna-tuned params: threshold=173, sroa_weight=157, simplify_weight=23.
+
+| Benchmark | Binary Reduction % |
+|-----------|-------------------|
+| sqlite3 | 15.9% |
+| spass | 14.6% |
+| consumer-typeset | 12.0% |
+| mafft | 11.5% |
+| tramp3d-v4 | 10.3% |
+| bullet | 7.4% |
+| lencod | 6.4% |
+| kimwitu | 0.3% |
+
+### Comparison
+
+- **Peak score**: Nearly identical (A=8.65 vs B=8.66)
+- **Key difference**: Optuna shifts the tradeoff — B gains +3.6% on
+  tramp3d-v4 (C++ templates benefit from higher threshold=173) but
+  loses on sqlite3/spass (less aggressive inlining overall)
+- **Consistency**: B has higher floor (worst=1.18 vs A's worst=-3.26)
+  but similar >7.0 hit rate (6/11 vs 6/10)
+- **Overhead**: Optuna doubles iteration time (8.3 vs 4.5 min/iter)
+- Both match Magellan's reported range of 4.27%–8.79% on CTMark
 
 Key insight: Os-level inlining (very aggressive size reduction) hurts
 tramp3d-v4 because C++ templates need inlining for specialization. The
 best heuristic uses **selective inlining** — high constant_args bonus,
 nested inline penalties, and a moderate threshold.
 
-Comparable to Magellan's reported range of 4.27%–8.79% binary reduction
-on CTMark.
+### Best Heuristic Structure
 
-### Best Heuristic Structure (Iteration 3)
-
-- BaseThreshold = 100 (selective, not aggressive)
 - Heavy constant_args bonus (30 per arg)
 - 2.5x penalty for unsimplified instructions
 - 4x penalty for loops
 - Doubled switch/jump table penalties
 - Nested inline penalties (20 per nested inline + cost/2)
 - Multi-block penalty (30)
-- SimplifyWeight = 150% (strong reward for simplifiable code)
+- Optuna-tuned: BaseThreshold=173, SROAWeight=157, SimplifyWeight=23
 
 ## File Structure
 
