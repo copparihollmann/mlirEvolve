@@ -1,0 +1,21 @@
+# LLVM inlining heuristic optimization task config
+#
+# Env vars are resolved at runtime by the evaluator (evaluate.py reads os.environ).
+# Set these in your shell or .env:
+#   LLVM_SRC_PATH   — path to llvm-project source
+#   EVOLVE_BUILD_DIR — LLVM build directory for incremental rebuilds
+#   BUILD_LLVM_DIR   — fallback for EVOLVE_BUILD_DIR
+
+target_file: "llvm/lib/Analysis/InlineAdvisor.cpp"
+build_targets:
+  - "bin/opt"
+benchmarks:
+  - "clang-self-host"
+
+metrics:
+  binary_size:
+    weight: 1.0
+    direction: "minimize"
+  perf:
+    weight: 0.0
+    direction: "maximize"

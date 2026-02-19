@@ -1,0 +1,16 @@
+max_iterations: 10
+population_size: 10
+checkpoint_interval: 1
+random_seed: 42
+diff_based_evolution: false
+
+database:
+  population_size: 10
+  archive_size: 10
+  num_islands: 1
+  migration_interval: 999
+
+evaluator:
+  timeout: 1800
+  cascade_evaluation: false
+  parallel_evaluations: 1

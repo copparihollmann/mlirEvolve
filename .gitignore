@@ -226,3 +226,15 @@ scip_pb2.py
 
 # Ignore neo4j database folder
 data/knowledge_base/neo4j/*
+
+# Evolve experiments (large outputs, checkpoints, logs)
+experiments/
+
+# Benchmark bitcode and binaries (large files)
+*.bc
+src/mlirAgent/evolve/tasks/*/benchmarks/testsuite/
+src/mlirAgent/evolve/tasks/*/baseline*.json
+
+# LLVM build artifacts
+llvm-build/
+llvm-project/
