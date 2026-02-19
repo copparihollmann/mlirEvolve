@@ -157,6 +157,42 @@ class EvalConfig:
         defaults.update(overrides)
         return cls(**defaults)
 
+    @staticmethod
+    def add_arguments(parser) -> None:
+        """Add EvalConfig flags to an argparse parser."""
+        parser.add_argument("--llvm-src", default=None,
+                            help="LLVM source tree root (env: LLVM_SRC_PATH)")
+        parser.add_argument("--build-dir", default=None,
+                            help="LLVM build directory (env: EVOLVE_BUILD_DIR)")
+        parser.add_argument("--opt-timeout", type=int, default=None,
+                            help="Per-benchmark timeout in seconds (default: 120)")
+        parser.add_argument("--optuna-trials", type=int, default=None,
+                            help="Optuna inner-loop trials, 0=disable (default: 20)")
+
+    @classmethod
+    def from_args(cls, args, target_file: str, **overrides) -> "EvalConfig":
+        """Build config from parsed CLI args, falling back to env vars.
+
+        Usage::
+
+            parser = argparse.ArgumentParser()
+            parser.add_argument("program_path")
+            EvalConfig.add_arguments(parser)
+            args = parser.parse_args()
+            config = EvalConfig.from_args(args, "llvm/lib/Analysis/EvolvedInlineCost.cpp")
+        """
+        cli = {}
+        if getattr(args, "llvm_src", None):
+            cli["llvm_src"] = args.llvm_src
+        if getattr(args, "build_dir", None):
+            cli["build_dir"] = args.build_dir
+        if getattr(args, "opt_timeout", None) is not None:
+            cli["opt_timeout"] = args.opt_timeout
+        if getattr(args, "optuna_trials", None) is not None:
+            cli["optuna_trials"] = args.optuna_trials
+        cli.update(overrides)
+        return cls.from_env(target_file, **cli)
+
 
 # ---------------------------------------------------------------------------
 # Helpers

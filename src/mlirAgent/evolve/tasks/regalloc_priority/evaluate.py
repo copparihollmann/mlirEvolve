@@ -22,17 +22,20 @@ import tempfile
 import time
 from pathlib import Path
 
-from ..llvm_bench import (
-    EvalConfig,
-    build_llvm,
-    eval_benchmarks,
-    extract_hyperparams,
-    find_benchmarks,
-    load_baseline,
-    optuna_tune,
-    patch_source,
-    restore_source,
-)
+try:
+    from ..llvm_bench import (
+        EvalConfig, build_llvm, eval_benchmarks, extract_hyperparams,
+        find_benchmarks, load_baseline, optuna_tune, patch_source,
+        restore_source,
+    )
+except ImportError:
+    # Standalone loading by OpenEvolve's importlib (no parent package)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from llvm_bench import (
+        EvalConfig, build_llvm, eval_benchmarks, extract_hyperparams,
+        find_benchmarks, load_baseline, optuna_tune, patch_source,
+        restore_source,
+    )
 
 _EVAL_DIR = Path(__file__).resolve().parent
 
@@ -162,8 +165,14 @@ def evaluate(program_path: str, config: EvalConfig = None) -> dict:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <program_path>", file=sys.stderr)
-        sys.exit(1)
-    metrics = evaluate(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description="Evaluate LLVM regalloc priority")
+    parser.add_argument("program_path", help="Path to evolved C++ source")
+    EvalConfig.add_arguments(parser)
+    args = parser.parse_args()
+    config = EvalConfig.from_args(
+        args, "llvm/lib/CodeGen/EvolvedRegAllocPriority.cpp",
+        baseline_file=str(_EVAL_DIR / "baseline_regalloc.json"),
+    )
+    metrics = evaluate(args.program_path, config=config)
     print(json.dumps(metrics, indent=2))
