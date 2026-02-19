@@ -16,415 +16,51 @@ Pipeline:
 
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-import optuna
-
-
-# ---------------------------------------------------------------------------
-# Optuna inner-loop configuration
-# ---------------------------------------------------------------------------
-
-# Number of Optuna trials per evaluation (0 = disable Optuna)
-_OPTUNA_TRIALS = int(os.environ.get("EVOLVE_OPTUNA_TRIALS", "20"))
-
-# Benchmark subset for Optuna trials (fast proxy); full suite on final eval
-_OPTUNA_SUBSET = ["sqlite3", "spass", "tramp3d-v4"]
-
-# Regex for [hyperparam] annotations in evolved C++ code
-_HYPERPARAM_RE = re.compile(
-    r"//\s*\[hyperparam\]:\s*([\w-]+),\s*(\w+),\s*(-?\d+),\s*(-?\d+)"
+from ..llvm_bench import (
+    EvalConfig,
+    build_llvm,
+    eval_benchmarks,
+    extract_hyperparams,
+    find_benchmarks,
+    load_baseline,
+    optuna_tune,
+    patch_source,
+    restore_source,
 )
 
 
-def _extract_hyperparams(code: str):
-    """Parse [hyperparam] comments from C++ source.
-
-    Returns list of (flag_name, type_str, min_val, max_val) tuples.
-    """
-    return [
-        (m.group(1), m.group(2), int(m.group(3)), int(m.group(4)))
-        for m in _HYPERPARAM_RE.finditer(code)
-    ]
-
-
-# Discover benchmark .bc files relative to this evaluator
-_EVAL_DIR = Path(__file__).resolve().parent
-_BENCH_DIR = _EVAL_DIR / "benchmarks"
-_TESTSUITE_DIR = _BENCH_DIR / "testsuite"
-_DATA_DIR = _TESTSUITE_DIR / "data"
-
-# Baseline cache file (stores default LLVM measurements for CTMark)
-_BASELINE_FILE = _TESTSUITE_DIR / "baseline.json"
-
-# Per-benchmark timeout for opt/llc (seconds). Aggressive heuristics can
-# cause exponential inlining on large TUs, so we cap per-benchmark.
-_OPT_TIMEOUT = int(os.environ.get("EVOLVE_OPT_TIMEOUT", "120"))
-
-# Benchmarks to exclude (clamav segfaults with aggressive inlining;
-# 7zip fails to link — missing symbols from multi-source build)
-_EXCLUDED = {"clamav", "7zip"}
-
-# Extra linker flags per benchmark (C++ benchmarks need -lstdc++)
-_EXTRA_LINK_FLAGS = {
-    "7zip": ["-lstdc++", "-pthread"],
-    "bullet": ["-lstdc++"],
-    "kimwitu": ["-lstdc++"],
-    "tramp3d-v4": ["-lstdc++"],
-}
-
-# Per-benchmark runtime configs (best-effort measurement).
-# data_files: specific files to copy from _DATA_DIR/<bench>/ to run dir
-# data_subdir: copy entire _DATA_DIR/<bench>/ contents to run dir
-# stdin_file: file in _DATA_DIR/<bench>/ to redirect as stdin
-# args: command line arguments
-_BENCH_RUN_CONFIGS = {
-    "7zip": {
-        "args": ["b"],
-        "timeout": 60,
-    },
-    "bullet": {
-        "data_files": ["landscape.mdl", "Taru.mdl"],
-        "timeout": 30,
-    },
-    "consumer-typeset": {
-        "args": ["-x", "-I", "data/include", "-D", "data/data",
-                 "-F", "data/font", "-C", "data/maps", "-H", "data/hyph",
-                 "large.lout"],
-        "data_subdir": True,
-        "timeout": 60,
-    },
-    "kimwitu": {
-        "args": ["-f", "test", "-o", "-v", "-s", "kcc",
-                 "inputs/f3.k", "inputs/f2.k", "inputs/f1.k"],
-        "data_subdir": True,
-        "timeout": 30,
-    },
-    "lencod": {
-        "args": ["-d", "data/encoder_small.cfg",
-                 "-p", "InputFile=data/foreman_part_qcif_444.yuv",
-                 "-p", "LeakyBucketRateFile=data/leakybucketrate.cfg",
-                 "-p", "QmatrixFile=data/q_matrix.cfg"],
-        "data_subdir": True,
-        "timeout": 120,
-    },
-    "mafft": {
-        "args": ["-b", "62", "-g", "0.100", "-f", "2.00", "-h", "0.100", "-L"],
-        "stdin_file": "pyruvate_decarboxylase.fasta",
-        "timeout": 60,
-    },
-    "spass": {
-        "args": ["problem.dfg"],
-        "data_files": ["problem.dfg"],
-        "timeout": 60,
-    },
-    "sqlite3": {
-        "args": ["-init", "sqlite3rc", ":memory:"],
-        "stdin_file": "commands",
-        "data_files": ["sqlite3rc"],
-        "timeout": 60,
-    },
-    "tramp3d-v4": {
-        "args": ["--cartvis", "1.0", "0.0", "--rhomin", "1e-8",
-                 "-n", "4", "--domain", "32", "32", "32"],
-        "timeout": 120,
-    },
-}
-
-
-def _find_benchmarks():
-    """Find CTMark .bc files in the testsuite directory, excluding problematic ones."""
-    if not _TESTSUITE_DIR.exists():
-        return []
-    return sorted(
-        bc for bc in _TESTSUITE_DIR.glob("*.bc")
-        if bc.stem not in _EXCLUDED
+def _score(total_binary, baseline_total_binary, speedups):
+    """Inlining score: binary reduction % + speedup bonus."""
+    binary_pct = (
+        100.0 * (baseline_total_binary - total_binary) / baseline_total_binary
+        if baseline_total_binary > 0 else 0.0
     )
+    avg_speedup = sum(speedups) / len(speedups) if speedups else 0.0
+    perf_bonus = (avg_speedup - 1.0) * 10 if avg_speedup > 0 else 0.0
+    return round(binary_pct + perf_bonus, 4)
 
 
-def _get_text_size(obj_path):
-    """Get .text section size from an object file using size(1)."""
-    try:
-        proc = subprocess.run(
-            ["size", str(obj_path)],
-            capture_output=True, text=True, timeout=10
-        )
-        if proc.returncode == 0:
-            # size output: text  data  bss  dec  hex  filename
-            lines = proc.stdout.strip().split("\n")
-            if len(lines) >= 2:
-                return int(lines[1].split()[0])
-    except (subprocess.TimeoutExpired, ValueError, IndexError):
-        pass
-    # Fallback: file size
-    return os.path.getsize(obj_path) if os.path.exists(obj_path) else 0
-
-
-def _run_benchmark(name, binary_path, tmp_dir):
-    """Run a benchmark with reference inputs and return wall-clock time in seconds."""
-    config = _BENCH_RUN_CONFIGS.get(name)
-    if not config:
-        return None
-
-    # Set up run directory with data files
-    run_dir = os.path.join(tmp_dir, f"{name}_run")
-    os.makedirs(run_dir, exist_ok=True)
-
-    # Copy binary to run dir
-    run_binary = os.path.join(run_dir, name)
-    shutil.copy2(binary_path, run_binary)
-    os.chmod(run_binary, 0o755)
-
-    bench_data = _DATA_DIR / name
-
-    # Copy data files/dirs
-    if config.get("data_subdir") and bench_data.exists():
-        for item in bench_data.iterdir():
-            dst = os.path.join(run_dir, item.name)
-            if item.is_dir():
-                shutil.copytree(str(item), dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(str(item), dst)
-    elif config.get("data_files") and bench_data.exists():
-        for f in config["data_files"]:
-            src = bench_data / f
-            if src.exists():
-                shutil.copy2(str(src), os.path.join(run_dir, f))
-
-    # Prepare stdin
-    stdin_fh = None
-    if config.get("stdin_file") and bench_data.exists():
-        stdin_src = bench_data / config["stdin_file"]
-        if stdin_src.exists():
-            stdin_fh = open(str(stdin_src), "r")
-
-    cmd = [run_binary] + config.get("args", [])
-    timeout = config.get("timeout", 30)
-
-    try:
-        start = time.time()
-        proc = subprocess.run(
-            cmd, capture_output=True, timeout=timeout,
-            cwd=run_dir, stdin=stdin_fh
-        )
-        elapsed = time.time() - start
-        if proc.returncode == 0:
-            return elapsed
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        if stdin_fh:
-            stdin_fh.close()
-    return None
-
-
-def _compile_benchmark(bc_path, opt_path, llc_path, use_evolved, tmp_dir,
-                       extra_opt_flags=None):
-    """Compile a .bc file through opt -> llc -> gcc.
-
-    Returns (text_size, binary_size, runtime, error_string).
-    Handles per-benchmark timeouts gracefully.
-
-    extra_opt_flags: additional flags for opt (e.g. ["-ae-inline-base-threshold=150"])
-    """
-    name = bc_path.stem
-    opt_bc = os.path.join(tmp_dir, f"{name}_opt.bc")
-    obj_file = os.path.join(tmp_dir, f"{name}.o")
-    binary = os.path.join(tmp_dir, name)
-
-    # opt pass
-    opt_cmd = [str(opt_path), "-O2"]
-    if use_evolved:
-        opt_cmd.append("-use-evolved-inline-cost")
-    if extra_opt_flags:
-        opt_cmd.extend(extra_opt_flags)
-    opt_cmd += [str(bc_path), "-o", opt_bc]
-
-    try:
-        proc = subprocess.run(opt_cmd, capture_output=True, text=True, timeout=_OPT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return None, None, None, f"opt timed out ({_OPT_TIMEOUT}s)"
-    if proc.returncode != 0:
-        return None, None, None, proc.stderr[:500]
-
-    # llc: bitcode -> object
-    llc_cmd = [str(llc_path), "-O2", "-filetype=obj", "-relocation-model=pic",
-               opt_bc, "-o", obj_file]
-    try:
-        proc = subprocess.run(llc_cmd, capture_output=True, text=True, timeout=_OPT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return None, None, None, f"llc timed out ({_OPT_TIMEOUT}s)"
-    if proc.returncode != 0:
-        return None, None, None, proc.stderr[:500]
-
-    text_size = _get_text_size(obj_file)
-
-    # Link to binary with per-benchmark flags
-    extra_flags = _EXTRA_LINK_FLAGS.get(name, [])
-    gcc_cmd = ["gcc", obj_file, "-o", binary, "-lm", "-lpthread", "-ldl"] + extra_flags
-    try:
-        proc = subprocess.run(gcc_cmd, capture_output=True, text=True, timeout=60)
-    except subprocess.TimeoutExpired:
-        return text_size, None, None, None
-    if proc.returncode != 0:
-        # Still return text_size even if linking fails
-        return text_size, None, None, f"link failed: {proc.stderr[:200]}"
-
-    binary_size = os.path.getsize(binary)
-
-    # Run benchmark (best-effort)
-    runtime = _run_benchmark(name, binary, tmp_dir)
-    return text_size, binary_size, runtime, None
-
-
-def _load_baseline(build_dir):
-    """Load or compute baseline (default LLVM) measurements."""
-    if _BASELINE_FILE.exists():
-        with open(_BASELINE_FILE) as f:
-            return json.load(f)
-
-    # Compute baseline with default opt (no evolved flag)
-    opt_path = os.path.join(build_dir, "bin", "opt")
-    llc_path = os.path.join(build_dir, "bin", "llc")
-    benchmarks = _find_benchmarks()
-
-    if not benchmarks:
-        return {}
-
-    baseline = {}
-    with tempfile.TemporaryDirectory(prefix="evolve_baseline_") as tmp_dir:
-        for bc in benchmarks:
-            print(f"  Baseline: {bc.stem}...", end=" ", flush=True)
-            text_size, binary_size, runtime, err = _compile_benchmark(
-                bc, opt_path, llc_path, use_evolved=False, tmp_dir=tmp_dir
-            )
-            if err:
-                print(f"ERROR: {err}")
-            elif text_size is not None:
-                entry = {"text_size": text_size, "runtime": runtime}
-                if binary_size is not None:
-                    entry["binary_size"] = binary_size
-                baseline[bc.name] = entry
-                print(f"text={text_size}, binary={binary_size}, runtime={runtime}")
-            else:
-                print("SKIP (no text size)")
-
-    # Cache to disk
-    try:
-        os.makedirs(_TESTSUITE_DIR, exist_ok=True)
-        with open(_BASELINE_FILE, "w") as f:
-            json.dump(baseline, f, indent=2)
-        print(f"  Baseline saved to {_BASELINE_FILE}")
-    except OSError:
-        pass
-
-    return baseline
-
-
-def _eval_benchmarks(benchmarks, opt_path, llc_path, baseline, tmp_dir,
-                     extra_opt_flags=None):
-    """Compile and score a set of benchmarks. Returns (score, details_dict).
-
-    Score = aggregate linked binary size reduction % vs baseline.
-    """
-    total_binary = 0
-    baseline_total_binary = 0
-    details = {}
-
-    for bc in benchmarks:
-        text_size, binary_size, runtime, err = _compile_benchmark(
-            bc, opt_path, llc_path, use_evolved=True, tmp_dir=tmp_dir,
-            extra_opt_flags=extra_opt_flags,
-        )
-        bl = baseline.get(bc.name, {})
-        info = {"text_size": text_size, "binary_size": binary_size,
-                "runtime": runtime}
-        if err:
-            info["error"] = err
-
-        if binary_size is not None:
-            total_binary += binary_size
-            bl_binary = bl.get("binary_size", binary_size)
-            baseline_total_binary += bl_binary
-
-        details[bc.name] = info
-
-    if baseline_total_binary > 0:
-        score = round(
-            100.0 * (baseline_total_binary - total_binary) / baseline_total_binary, 4
-        )
-    else:
-        score = 0.0
-
-    return score, details
-
-
-def _optuna_tune(opt_path, llc_path, benchmarks, baseline, n_trials,
-                 hyperparams):
-    """Run Optuna trials on a subset of benchmarks to tune hyperparams.
-
-    Returns (best_score, best_params_dict, best_flags_list).
-    """
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-    # Filter to subset benchmarks for fast Optuna trials
-    subset_names = set(_OPTUNA_SUBSET)
-    subset_bcs = [bc for bc in benchmarks if bc.stem in subset_names]
-    if not subset_bcs:
-        subset_bcs = benchmarks[:3]  # fallback
-
-    def objective(trial):
-        flags = []
-        for flag_name, type_str, lo, hi in hyperparams:
-            if type_str == "int":
-                val = trial.suggest_int(flag_name, lo, hi)
-            else:
-                val = trial.suggest_float(flag_name, float(lo), float(hi))
-            flags.append(f"-{flag_name}={val}")
-
-        with tempfile.TemporaryDirectory(prefix="optuna_trial_") as tmp_dir:
-            score, _ = _eval_benchmarks(
-                subset_bcs, opt_path, llc_path, baseline, tmp_dir,
-                extra_opt_flags=flags,
-            )
-        return score
-
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=n_trials)
-
-    best_params = study.best_params
-    best_flags = [f"-{k}={v}" for k, v in best_params.items()]
-    return study.best_value, best_params, best_flags
-
-
-def evaluate(program_path: str) -> dict:
+def evaluate(program_path: str, config: EvalConfig = None) -> dict:
     """Evaluate an evolved LLVM inlining heuristic.
 
     Score = linked binary size reduction % vs baseline (higher = better).
-    If [hyperparam] annotations are present and EVOLVE_OPTUNA_TRIALS > 0,
+    If [hyperparam] annotations are present and optuna_trials > 0,
     runs Optuna inner-loop to tune numeric knobs before final evaluation.
     """
-    llvm_src = os.environ.get("LLVM_SRC_PATH", "")
-    build_dir = os.environ.get("EVOLVE_BUILD_DIR",
-                               os.environ.get("BUILD_LLVM_DIR", ""))
+    if config is None:
+        config = EvalConfig.from_env("llvm/lib/Analysis/EvolvedInlineCost.cpp")
 
-    if not llvm_src or not build_dir:
+    if not config.llvm_src or not config.build_dir:
         return {
             "combined_score": 0.0,
             "error": "LLVM_SRC_PATH and EVOLVE_BUILD_DIR must be set",
         }
-
-    target_file = os.environ.get(
-        "EVOLVE_TARGET_FILE", "llvm/lib/Analysis/EvolvedInlineCost.cpp"
-    )
-    dest = os.path.join(llvm_src, target_file)
-    backup = dest + ".evolve.bak"
 
     result = {
         "combined_score": 0.0,
@@ -439,155 +75,94 @@ def evaluate(program_path: str) -> dict:
         "error": None,
     }
 
-    # 1. Patch evolved heuristic into LLVM source
     try:
-        if os.path.exists(dest):
-            shutil.copy2(dest, backup)
-        shutil.copy2(program_path, dest)
+        dest, backup = patch_source(program_path, config)
     except OSError as e:
         result["error"] = f"Patch failed: {e}"
         return result
 
     try:
-        # 2. Rebuild opt + llc incrementally
-        ninja = os.environ.get("NINJA", shutil.which("ninja") or "ninja")
-        build_targets = os.environ.get(
-            "EVOLVE_BUILD_TARGETS", "bin/opt bin/llc"
-        ).split()
-        cmd = [ninja, "-C", build_dir] + build_targets
-
-        start = time.time()
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        result["build_time"] = round(time.time() - start, 2)
-        result["build_success"] = proc.returncode == 0
-
-        if proc.returncode != 0:
-            lines = proc.stderr.strip().split("\n")
-            err_lines = [l for l in lines if "error:" in l.lower()]
-            result["error"] = "\n".join(err_lines[:10]) if err_lines else "\n".join(lines[-10:])
+        ok, build_time, err = build_llvm(config)
+        result["build_time"] = build_time
+        result["build_success"] = ok
+        if not ok:
+            result["error"] = err
             return result
 
-        # 3. Load baseline measurements
-        baseline = _load_baseline(build_dir)
-
-        # 4. Set up benchmark evaluation
-        opt_path = os.path.join(build_dir, "bin", "opt")
-        llc_path = os.path.join(build_dir, "bin", "llc")
-        benchmarks = _find_benchmarks()
+        baseline = load_baseline(config)
+        opt_path = os.path.join(config.build_dir, "bin", "opt")
+        llc_path = os.path.join(config.build_dir, "bin", "llc")
+        benchmarks = find_benchmarks(Path(config.testsuite_dir))
 
         if not benchmarks:
             result["error"] = "No benchmark .bc files found in testsuite/"
             result["combined_score"] = 0.0
             return result
 
-        # 4a. Extract hyperparams and optionally run Optuna inner-loop
+        # Extract hyperparams and optionally run Optuna
         with open(program_path) as f:
-            source_code = f.read()
-        hyperparams = _extract_hyperparams(source_code)
+            hyperparams = extract_hyperparams(f.read())
 
-        extra_flags = None
-        if hyperparams and _OPTUNA_TRIALS > 0:
+        evolved_opt_flags = ["-use-evolved-inline-cost"]
+
+        if hyperparams and config.optuna_trials > 0:
             print(f"  Optuna: tuning {len(hyperparams)} hyperparams "
-                  f"({_OPTUNA_TRIALS} trials on {_OPTUNA_SUBSET})...")
+                  f"({config.optuna_trials} trials on {config.optuna_subset})...")
             tune_start = time.time()
-            best_sub_score, best_params, extra_flags = _optuna_tune(
+            best_sub, best_params, extra_flags = optuna_tune(
                 opt_path, llc_path, benchmarks, baseline,
-                n_trials=_OPTUNA_TRIALS, hyperparams=hyperparams,
+                n_trials=config.optuna_trials, hyperparams=hyperparams,
+                data_dir=config.data_dir, score_fn=_score,
+                opt_timeout=config.opt_timeout,
+                optuna_subset=config.optuna_subset,
+                base_opt_flags=evolved_opt_flags, flag_target="opt",
             )
-            tune_time = round(time.time() - tune_start, 2)
-            result["optuna_trials"] = _OPTUNA_TRIALS
-            result["optuna_subset_score"] = best_sub_score
+            result["optuna_trials"] = config.optuna_trials
+            result["optuna_subset_score"] = best_sub
             result["tuned_params"] = best_params
-            result["tune_time"] = tune_time
-            print(f"  Optuna done in {tune_time}s. "
-                  f"Subset score={best_sub_score:.2f}, params={best_params}")
+            result["tune_time"] = round(time.time() - tune_start, 2)
+            print(f"  Optuna done in {result['tune_time']}s. "
+                  f"Subset score={best_sub:.2f}, params={best_params}")
+            evolved_opt_flags.extend(extra_flags)
         elif hyperparams:
             result["optuna_trials"] = 0
             result["tuned_params"] = {}
 
-        # 4b. Final evaluation on ALL benchmarks (with tuned flags if available)
-        total_text = 0
-        baseline_total_text = 0
-        total_binary = 0
-        baseline_total_binary = 0
-        speedups = []
-        bench_errors = []
-
+        # Final evaluation on ALL benchmarks
         with tempfile.TemporaryDirectory(prefix="evolve_eval_") as tmp_dir:
-            for bc in benchmarks:
-                text_size, binary_size, runtime, err = _compile_benchmark(
-                    bc, opt_path, llc_path, use_evolved=True, tmp_dir=tmp_dir,
-                    extra_opt_flags=extra_flags,
-                )
-                bench_info = {
-                    "text_size": text_size,
-                    "binary_size": binary_size,
-                    "runtime": runtime,
-                }
+            score, ev = eval_benchmarks(
+                benchmarks, opt_path, llc_path, baseline, tmp_dir,
+                config.data_dir, _score,
+                evolved_opt_flags=evolved_opt_flags,
+                opt_timeout=config.opt_timeout,
+            )
 
-                if err:
-                    bench_info["error"] = err
-                    bench_errors.append(f"{bc.name}: {err}")
+        result["combined_score"] = score
+        result["benchmark_details"] = ev["details"]
+        result["total_text_size"] = ev["total_text"]
+        result["total_binary_size"] = ev["total_binary"]
 
-                bl = baseline.get(bc.name, {})
-
-                if text_size is not None:
-                    total_text += text_size
-                    bl_text = bl.get("text_size", text_size)
-                    baseline_total_text += bl_text
-                    if bl_text > 0:
-                        bench_info["text_reduction_pct"] = round(
-                            100.0 * (bl_text - text_size) / bl_text, 4
-                        )
-
-                if binary_size is not None:
-                    total_binary += binary_size
-                    bl_binary = bl.get("binary_size", binary_size)
-                    baseline_total_binary += bl_binary
-                    if bl_binary > 0:
-                        bench_info["binary_reduction_pct"] = round(
-                            100.0 * (bl_binary - binary_size) / bl_binary, 4
-                        )
-
-                bl_rt = bl.get("runtime")
-                if runtime is not None and bl_rt and bl_rt > 0:
-                    bench_info["speedup"] = round(bl_rt / runtime, 4)
-                    speedups.append(bl_rt / runtime)
-
-                result["benchmark_details"][bc.name] = bench_info
-
-        result["total_text_size"] = total_text
-        result["total_binary_size"] = total_binary
-
-        # 5. Compute aggregate scores
-        if baseline_total_text > 0:
+        if ev["baseline_total_text"] > 0:
             result["size_reduction_pct"] = round(
-                100.0 * (baseline_total_text - total_text) / baseline_total_text, 4
+                100.0 * (ev["baseline_total_text"] - ev["total_text"])
+                / ev["baseline_total_text"], 4
             )
-
-        if baseline_total_binary > 0:
+        if ev["baseline_total_binary"] > 0:
             result["binary_reduction_pct"] = round(
-                100.0 * (baseline_total_binary - total_binary) / baseline_total_binary, 4
+                100.0 * (ev["baseline_total_binary"] - ev["total_binary"])
+                / ev["baseline_total_binary"], 4
             )
-
-        if speedups:
-            result["avg_speedup"] = round(sum(speedups) / len(speedups), 4)
-
-        # Primary score: linked binary size reduction (Magellan-comparable)
-        # Secondary: speedup bonus
-        binary_score = result["binary_reduction_pct"]
-        perf_score = (result["avg_speedup"] - 1.0) * 10 if result["avg_speedup"] > 0 else 0
-        result["combined_score"] = round(binary_score + perf_score, 4)
-
-        if bench_errors:
-            result["error"] = "; ".join(bench_errors)
+        if ev["speedups"]:
+            result["avg_speedup"] = round(
+                sum(ev["speedups"]) / len(ev["speedups"]), 4
+            )
+        if ev["errors"]:
+            result["error"] = "; ".join(ev["errors"])
 
     except subprocess.TimeoutExpired:
         result["error"] = "Build timed out (600s)"
     finally:
-        # Restore original file
-        if os.path.exists(backup):
-            shutil.move(backup, dest)
+        restore_source(dest, backup)
 
     return result
 

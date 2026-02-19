@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from ..base import Task
-from mlirAgent.tools.evaluator import evaluate_heuristic
+from .evaluate import evaluate as evaluate_evolved
 
 
 class LLVMInliningTask(Task):
@@ -29,10 +29,4 @@ class LLVMInliningTask(Task):
         return self._task_dir / "evaluate.py"
 
     def evaluate(self, program_path: Path) -> Dict[str, Any]:
-        return evaluate_heuristic(
-            heuristic_path=str(program_path),
-            target_file=self._config.get(
-                "target_file", "llvm/lib/Analysis/InlineAdvisor.cpp"
-            ),
-            benchmark_binary=self._config.get("benchmark_binary"),
-        )
+        return evaluate_evolved(str(program_path))
