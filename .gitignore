@@ -234,6 +234,7 @@ experiments/
 *.bc
 src/mlirAgent/evolve/tasks/*/benchmarks/testsuite/
 src/mlirAgent/evolve/tasks/*/baseline*.json
+*.bc
 
 # LLVM build artifacts
 llvm-build/
