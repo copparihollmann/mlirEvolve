@@ -239,8 +239,9 @@ def get_text_size(obj_path: str) -> int:
 # Benchmark execution
 # ---------------------------------------------------------------------------
 
-def run_benchmark(name: str, binary_path: str, tmp_dir: str, data_dir: str):
-    """Run a benchmark with reference inputs; return wall-clock seconds or None."""
+def run_benchmark(name: str, binary_path: str, tmp_dir: str, data_dir: str,
+                  num_runs: int = 5):
+    """Run a benchmark with reference inputs; return median wall-clock seconds or None."""
     config = BENCH_RUN_CONFIGS.get(name)
     if not config:
         return None
@@ -267,31 +268,36 @@ def run_benchmark(name: str, binary_path: str, tmp_dir: str, data_dir: str):
             if src.exists():
                 shutil.copy2(str(src), os.path.join(run_dir, f))
 
-    # Prepare stdin
-    stdin_fh = None
-    if config.get("stdin_file") and bench_data.exists():
-        stdin_src = bench_data / config["stdin_file"]
-        if stdin_src.exists():
-            stdin_fh = open(str(stdin_src), "r")
-
     cmd = [run_binary] + config.get("args", [])
     timeout = config.get("timeout", 30)
+    stdin_file = None
+    if config.get("stdin_file") and bench_data.exists():
+        stdin_file = bench_data / config["stdin_file"]
 
-    try:
-        start = time.time()
-        proc = subprocess.run(
-            cmd, capture_output=True, timeout=timeout,
-            cwd=run_dir, stdin=stdin_fh,
-        )
-        elapsed = time.time() - start
-        if proc.returncode == 0:
-            return elapsed
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        if stdin_fh:
-            stdin_fh.close()
-    return None
+    timings = []
+    for _ in range(num_runs):
+        stdin_fh = None
+        try:
+            if stdin_file and stdin_file.exists():
+                stdin_fh = open(str(stdin_file), "r")
+            start = time.time()
+            proc = subprocess.run(
+                cmd, capture_output=True, timeout=timeout,
+                cwd=run_dir, stdin=stdin_fh,
+            )
+            elapsed = time.time() - start
+            if proc.returncode == 0:
+                timings.append(elapsed)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            if stdin_fh:
+                stdin_fh.close()
+
+    if not timings:
+        return None
+    timings.sort()
+    return timings[len(timings) // 2]
 
 
 def compile_benchmark(bc_path, opt_path, llc_path, tmp_dir, data_dir,
