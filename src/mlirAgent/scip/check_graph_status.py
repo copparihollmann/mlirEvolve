@@ -21,6 +21,17 @@ def check_status():
         print("✅ Connection Successful!")
         
         with driver.session() as session:
+            # --- NEW: Check Server Version ---
+            ver_result = session.run("CALL dbms.components() YIELD versions RETURN versions[0] AS v").single()
+            server_version = ver_result["v"]
+            print(f"🆕 Server Version: {server_version}")
+            
+            if not server_version.startswith("5.26"):
+                print("⚠️  WARNING: Server is NOT running the expected version (5.26.0)!")
+            else:
+                print("✅ Update Verified: Running Neo4j 5.26.0")
+            # ---------------------------------
+
             # 1. Count Nodes
             result = session.run("MATCH (n) RETURN count(n) as count")
             node_count = result.single()["count"]
@@ -46,6 +57,5 @@ def check_status():
     except Exception as e:
         print(f"\n❌ CONNECTION FAILED: {e}")
         print("   Make sure your Docker container is running.")
-
 if __name__ == "__main__":
     check_status()
