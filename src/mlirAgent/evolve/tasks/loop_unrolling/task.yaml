@@ -1,0 +1,9 @@
+name: loop_unrolling
+description: >
+  Evolve LLVM's loop unrolling heuristic (computeUnrollCount) to improve
+  runtime performance on CTMark benchmarks. The evolved function decides
+  whether and how much to unroll each loop based on 16 extracted features.
+evolve_blocks:
+  - loop_unroll_heuristic
+target_file: llvm/lib/Transforms/Scalar/EvolvedLoopUnroll.cpp
+language: cpp

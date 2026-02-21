@@ -51,6 +51,12 @@ EXAMPLES = {
         "file_suffix": ".cpp",
         "language": "cpp",
     },
+    "loop_unrolling": {
+        "initial_program": str(Path(__file__).parent / "tasks/loop_unrolling/initial.cpp"),
+        "evaluator": str(Path(__file__).parent / "tasks/loop_unrolling/evaluate.py"),
+        "file_suffix": ".cpp",
+        "language": "cpp",
+    },
 }
 
 
